@@ -3,6 +3,7 @@ package com.toyberman;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Callback;
@@ -26,17 +27,13 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 import okhttp3.Call;
 import okhttp3.Cookie;
-import okhttp3.CookieJar;
 import okhttp3.Headers;
-import okhttp3.HttpUrl;
 import okhttp3.JavaNetCookieJar;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -44,6 +41,7 @@ import okhttp3.Response;
 
 public class RNSslPinningModule extends ReactContextBaseJavaModule {
 
+    private static final String MUTUAL_TLS = "mutualTls";
     private static final String OPT_SSL_PINNING_KEY = "sslPinning";
     private static final String DISABLE_ALL_SECURITY = "disableAllSecurity";
     private static final String RESPONSE_TYPE = "responseType";
@@ -61,7 +59,6 @@ public class RNSslPinningModule extends ReactContextBaseJavaModule {
         cookieStore = new HashMap<>();
         cookieHandler = new ForwardingCookieHandler(reactContext);
         cookieJar = new ReactCookieJarContainer();
-
         cookieJar.setCookieJar(new JavaNetCookieJar(cookieHandler));
     }
 
@@ -113,6 +110,7 @@ public class RNSslPinningModule extends ReactContextBaseJavaModule {
         promise.resolve(null);
     }
 
+    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
     @ReactMethod
     public void fetch(String hostname, final ReadableMap options, final Callback callback) {
 
@@ -125,6 +123,10 @@ public class RNSslPinningModule extends ReactContextBaseJavaModule {
         }
         if (options.hasKey(DISABLE_ALL_SECURITY) && options.getBoolean(DISABLE_ALL_SECURITY)) {
             client = OkHttpUtils.buildDefaultOHttpClient(cookieJar, domainName, options);
+        }
+        // With Mutual TLS
+        else if (options.hasKey(MUTUAL_TLS)) {
+            client = OkHttpUtils.buildOkHttpClient(cookieJar, domainName, options);
         }
         // With ssl pinning
         else if (options.hasKey(OPT_SSL_PINNING_KEY)) {

@@ -2,7 +2,11 @@ package com.toyberman.Utils;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Build;
 
+import androidx.annotation.RequiresApi;
+
+import com.facebook.react.bridge.JavaOnlyArray;
 import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableType;
@@ -17,14 +21,28 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.charset.Charset;
+import java.security.KeyFactory;
+import java.security.KeyManagementException;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
@@ -50,15 +68,102 @@ public class OkHttpUtils {
     private static final String FILE = "file";
     private static final HashMap<String, OkHttpClient> clientsByDomain = new HashMap<>();
     private static OkHttpClient defaultClient = null;
-    //    private static OkHttpClient client = null;
+    private static OkHttpClient client = null;
     private static SSLContext sslContext;
     private static String content_type = "application/json; charset=utf-8";
     public static MediaType mediaType = MediaType.parse(content_type);
 
+    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
+    public static OkHttpClient.Builder initMutualTls(OkHttpClient.Builder clientBuilder) {
+        try {
+            final String SECRET = "secret";
+
+            CertificateFactory certificateFactory = CertificateFactory.getInstance("X.509");
+
+            // Get private key
+            InputStream privateKeyInputStream = new BufferedInputStream(
+                    OkHttpUtils.class.getClassLoader()
+                            .getResourceAsStream("assets/certKey.key"));
+
+            byte[] privateKeyByteArray = new byte[privateKeyInputStream.available()];
+            privateKeyInputStream.read(privateKeyByteArray);
+
+            String privateKeyContent = new String(privateKeyByteArray, Charset.defaultCharset())
+                    .replace("-----BEGIN PRIVATE KEY-----", "")
+                    .replaceAll(System.lineSeparator(), "")
+                    .replace("-----END PRIVATE KEY-----", "");
+
+            byte[] rawPrivateKeyByteArray = new byte[0];
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                rawPrivateKeyByteArray = Base64.getDecoder().decode(privateKeyContent);
+            }
+
+            KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+            PKCS8EncodedKeySpec keySpec = new PKCS8EncodedKeySpec(rawPrivateKeyByteArray);
+
+            // Get certificate
+            InputStream certificateInputStream =  new BufferedInputStream(
+                    OkHttpUtils.class.getClassLoader()
+                            .getResourceAsStream("assets/cert.pem"));
+
+            Certificate certificate = certificateFactory.generateCertificate(certificateInputStream);
+
+            // Set up KeyStore
+            KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
+            keyStore.load(null, SECRET.toCharArray());
+            keyStore.setKeyEntry("client", keyFactory.generatePrivate(keySpec), SECRET.toCharArray(), new Certificate[]{certificate});
+            certificateInputStream.close();
+
+            // Set up Trust Managers
+            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            trustManagerFactory.init((KeyStore) null);
+            TrustManager[] trustManagers = trustManagerFactory.getTrustManagers();
+
+            // Set up Key Managers
+            KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+            keyManagerFactory.init(keyStore, SECRET.toCharArray());
+            KeyManager[] keyManagers = keyManagerFactory.getKeyManagers();
+
+            // Obtain SSL Socket Factory
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(keyManagers, trustManagers, new SecureRandom());
+            SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
+
+            // Finally, return the client, which will then be used to make HTTP calls.
+            clientBuilder.sslSocketFactory(sslSocketFactory, (X509TrustManager) trustManagers[0]);
+
+            return clientBuilder;
+        } catch (CertificateException e) {
+            e.printStackTrace();
+        } catch (KeyStoreException e) {
+            e.printStackTrace();
+        } catch (NoSuchAlgorithmException e) {
+            e.printStackTrace();
+        } catch (KeyManagementException e) {
+            e.printStackTrace();
+        } catch (InvalidKeySpecException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        } catch (UnrecoverableKeyException e) {
+            e.printStackTrace();
+        }
+
+        return clientBuilder;
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
+    public static OkHttpClient buildOkHttpClient(CookieJar cookieJar, String domainName, ReadableMap options) {
+        return buildOkHttpClient(cookieJar, domainName, new JavaOnlyArray(), options);
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
     public static OkHttpClient buildOkHttpClient(CookieJar cookieJar, String domainName, ReadableArray certs, ReadableMap options) {
 
         OkHttpClient client = null;
         CertificatePinner certificatePinner = null;
+
         if (!clientsByDomain.containsKey(domainName)) {
             // add logging interceptor
             HttpLoggingInterceptor logging = new HttpLoggingInterceptor();
@@ -67,8 +172,12 @@ public class OkHttpUtils {
             OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder();
             clientBuilder.cookieJar(cookieJar);
 
-            if (options.hasKey("pkPinning") && options.getBoolean("pkPinning")) {
-                // public key pinning
+            if (options.hasKey("mutualTls") && options.getBoolean("mutualTls")) {
+                clientBuilder = initMutualTls(clientBuilder);
+            }
+            // public key pinning
+            else if (options.hasKey("pkPinning") && options.getBoolean("pkPinning")) {
+
                 certificatePinner = initPublicKeyPinning(certs, domainName);
                 clientBuilder.certificatePinner(certificatePinner);
             } else {
@@ -78,7 +187,6 @@ public class OkHttpUtils {
                         .sslSocketFactory(sslContext.getSocketFactory(), manager);
             }
 
-
             if (BuildConfig.DEBUG) {
                 clientBuilder.addInterceptor(logging);
             }
@@ -86,9 +194,7 @@ public class OkHttpUtils {
             client = clientBuilder
                     .build();
 
-
             clientsByDomain.put(domainName, client);
-            return client;
         }
 
         client = clientsByDomain.get(domainName);
@@ -107,7 +213,6 @@ public class OkHttpUtils {
 
 
         return client;
-
     }
 
     public static OkHttpClient buildDefaultOHttpClient(CookieJar cookieJar, String domainName, ReadableMap options) {
@@ -318,3 +423,4 @@ public class OkHttpUtils {
         }
     }
 }
+
