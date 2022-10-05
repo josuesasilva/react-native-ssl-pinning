@@ -15,6 +15,8 @@ import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.bridge.WritableNativeMap;
 import com.facebook.react.modules.network.ForwardingCookieHandler;
+import com.facebook.react.modules.network.ReactCookieJarContainer;
+import com.facebook.react.modules.network.CookieJarContainer;
 import com.toyberman.Utils.OkHttpUtils;
 
 import org.json.JSONException;
@@ -35,12 +37,12 @@ import okhttp3.Cookie;
 import okhttp3.CookieJar;
 import okhttp3.Headers;
 import okhttp3.HttpUrl;
+import okhttp3.JavaNetCookieJar;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
 public class RNSslPinningModule extends ReactContextBaseJavaModule {
-
 
     private static final String OPT_SSL_PINNING_KEY = "sslPinning";
     private static final String DISABLE_ALL_SECURITY = "disableAllSecurity";
@@ -49,7 +51,7 @@ public class RNSslPinningModule extends ReactContextBaseJavaModule {
 
     private final ReactApplicationContext reactContext;
     private final HashMap<String, List<Cookie>> cookieStore;
-    private CookieJar cookieJar = null;
+    private CookieJarContainer cookieJar;
     private ForwardingCookieHandler cookieHandler;
     private OkHttpClient client;
 
@@ -58,63 +60,9 @@ public class RNSslPinningModule extends ReactContextBaseJavaModule {
         this.reactContext = reactContext;
         cookieStore = new HashMap<>();
         cookieHandler = new ForwardingCookieHandler(reactContext);
-        cookieJar = new CookieJar() {
+        cookieJar = new ReactCookieJarContainer();
 
-            @Override
-            public synchronized void saveFromResponse(HttpUrl url, List<Cookie> unmodifiableCookieList) {
-                for (Cookie cookie : unmodifiableCookieList) {
-                    setCookie(url, cookie);
-                }
-            }
-
-            @Override
-            public synchronized List<Cookie> loadForRequest(HttpUrl url) {
-                List<Cookie> cookies = cookieStore.get(url.host());
-                return cookies != null ? cookies : new ArrayList<Cookie>();
-            }
-
-            public void setCookie(HttpUrl url, Cookie cookie) {
-
-                final String host = url.host();
-
-                List<Cookie> cookieListForUrl = cookieStore.get(host);
-                if (cookieListForUrl == null) {
-                    cookieListForUrl = new ArrayList<Cookie>();
-                    cookieStore.put(host, cookieListForUrl);
-                }
-                try {
-                    putCookie(url, cookieListForUrl, cookie);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-
-            private void putCookie(HttpUrl url, List<Cookie> storedCookieList, Cookie newCookie) throws URISyntaxException, IOException {
-
-                Cookie oldCookie = null;
-                Map<String, List<String>> cookieMap = new HashMap<>();
-
-                for (Cookie storedCookie : storedCookieList) {
-
-                    // create key for comparison
-                    final String oldCookieKey = storedCookie.name() + storedCookie.path();
-                    final String newCookieKey = newCookie.name() + newCookie.path();
-
-                    if (oldCookieKey.equals(newCookieKey)) {
-                        oldCookie = storedCookie;
-                        break;
-                    }
-                }
-                if (oldCookie != null) {
-                    storedCookieList.remove(oldCookie);
-                }
-                storedCookieList.add(newCookie);
-
-                cookieMap.put("Set-cookie", Collections.singletonList(newCookie.toString()));
-                cookieHandler.put(url.uri(), cookieMap);
-            }
-        };
-
+        cookieJar.setCookieJar(new JavaNetCookieJar(cookieHandler));
     }
 
     public static String getDomainName(String url) throws URISyntaxException {
@@ -265,3 +213,4 @@ public class RNSslPinningModule extends ReactContextBaseJavaModule {
     }
 
 }
+
