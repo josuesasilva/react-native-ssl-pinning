@@ -12,9 +12,10 @@ export type Options = {
     credentials?: string,
     headers?: Header,
     method?: 'DELETE' | 'GET' | 'POST' | 'PUT',
-    sslPinning: {
+    sslPinning?: {
         certs: Array<string>
     },
+    mutualTls?: boolean,
     timeoutInterval?: number,
     disableAllSecurity?: boolean
 }
@@ -31,3 +32,4 @@ export type Response = {
 declare export function fetch(url: string, options: Options): Promise<Response>;
 declare export function removeCookieByName(cookieName: string): Promise<void>
 declare export function getCookies(domain: string): Promise<Cookies>
+
